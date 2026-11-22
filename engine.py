@@ -7,7 +7,14 @@ DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
 
 
 def load_demo_data():
-    return json.loads(Path("demo/data.json").read_text(encoding="utf-8"))
+    """Load the bundled demo dataset independently of the process working directory."""
+    demo_file = Path(__file__).resolve().parent / "demo" / "data.json"
+    if not demo_file.is_file():
+        raise FileNotFoundError(
+            f"Demo dataset not found at {demo_file}. "
+            "Ensure demo/data.json is included in the deployed repository."
+        )
+    return json.loads(demo_file.read_text(encoding="utf-8"))
 
 
 def parse_timetable_pdf(uploaded_file, use_ocr=False, default_group="OCR-GROUP", cloud_ocr_config=None):
