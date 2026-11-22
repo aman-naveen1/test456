@@ -1,0 +1,105 @@
+{
+  "students": [
+    {
+      "id": "BSc-CS-3A",
+      "size": 45
+    },
+    {
+      "id": "BSc-CS-3B",
+      "size": 38
+    }
+  ],
+  "teachers": [
+    {
+      "name": "Dr. Sharma",
+      "qualified_courses": [
+        "Data Structures",
+        "Database Management"
+      ],
+      "available_slots": {}
+    },
+    {
+      "name": "Prof. Mehta",
+      "qualified_courses": [
+        "Operating Systems",
+        "Computer Networks"
+      ],
+      "available_slots": {}
+    },
+    {
+      "name": "Ms. Rao",
+      "qualified_courses": [
+        "Mathematics",
+        "Database Management"
+      ],
+      "available_slots": {}
+    }
+  ],
+  "rooms": [
+    {
+      "name": "C-101",
+      "capacity": 60,
+      "type": "Classroom"
+    },
+    {
+      "name": "C-102",
+      "capacity": 50,
+      "type": "Classroom"
+    },
+    {
+      "name": "Lab-1",
+      "capacity": 45,
+      "type": "Computer Lab"
+    }
+  ],
+  "classes": [
+    {
+      "day": "Monday",
+      "slot": "09:00-10:00",
+      "course": "Data Structures",
+      "teacher": "Dr. Sharma",
+      "room": "C-101",
+      "group": "BSc-CS-3A"
+    },
+    {
+      "day": "Monday",
+      "slot": "10:00-11:00",
+      "course": "Operating Systems",
+      "teacher": "Prof. Mehta",
+      "room": "C-102",
+      "group": "BSc-CS-3A"
+    },
+    {
+      "day": "Tuesday",
+      "slot": "11:15-12:15",
+      "course": "Database Management",
+      "teacher": "Ms. Rao",
+      "room": "C-101",
+      "group": "BSc-CS-3A"
+    },
+    {
+      "day": "Wednesday",
+      "slot": "09:00-10:00",
+      "course": "Mathematics",
+      "teacher": "Ms. Rao",
+      "room": "C-102",
+      "group": "BSc-CS-3B"
+    },
+    {
+      "day": "Wednesday",
+      "slot": "10:00-11:00",
+      "course": "Computer Networks",
+      "teacher": "Prof. Mehta",
+      "room": "C-101",
+      "group": "BSc-CS-3B"
+    },
+    {
+      "day": "Thursday",
+      "slot": "14:00-15:00",
+      "course": "Data Structures",
+      "teacher": "Dr. Sharma",
+      "room": "Lab-1",
+      "group": "BSc-CS-3B"
+    }
+  ]
+}
