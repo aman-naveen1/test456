@@ -90,15 +90,41 @@ def simulate_disruption(data, disruption_type, target_name, day=None, slot=None,
             return {"status": "NO_MATCH", "summary": f"No classes use teacher {target_name} for the requested disruption."}
         if day is not None and slot is not None:
             def _without_slot(teacher):
-                # Keep the rest of the week; empty availability means "free all week".
-                avail = {d: list(v) for d, v in teacher.get("available_slots", {}).items()} or {d: list(SLOTS) for d in DAYS}
-                avail[day] = [s for s in avail.get(day, []) if s != slot]
+                # Empty availability means the teacher is free in every slot.
+                original = teacher.get("available_slots") or {}
+                avail = (
+                    {d: list(original.get(d, [])) for d in DAYS}
+                    if original
+                    else {d: list(SLOTS) for d in DAYS}
+                )
+                if day in avail:
+                    avail[day] = [s for s in avail[day] if s != slot]
                 return {**teacher, "available_slots": avail}
 
-            trial["teachers"] = [
-                _without_slot(teacher) if teacher.get("name") == target_name else teacher
+            teachers = {
+                teacher.get("name"): teacher
                 for teacher in trial.get("teachers", [])
-            ]
+            }
+            # The optimizer treats an empty teacher list as "no metadata".
+            # Ensure all timetable teachers have metadata before adding this
+            # one-slot restriction, otherwise the restriction is ignored.
+            for cls in classes:
+                name = cls.get("teacher")
+                if name and name not in teachers:
+                    teachers[name] = {
+                        "name": name,
+                        "qualified_courses": sorted({
+                            item.get("course")
+                            for item in classes
+                            if item.get("teacher") == name and item.get("course")
+                        }),
+                        "available_slots": {},
+                    }
+
+            target_teacher = teachers.get(target_name)
+            if target_teacher is not None:
+                teachers[target_name] = _without_slot(target_teacher)
+            trial["teachers"] = list(teachers.values())
         else:
             blocked = {day_name: [] for day_name in DAYS}
             trial["teachers"] = [
