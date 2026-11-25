@@ -16,10 +16,11 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS students (id TEXT PRIMARY KEY, size INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS teachers (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, qualified_courses TEXT DEFAULT '', available_slots TEXT DEFAULT '{}');
 CREATE TABLE IF NOT EXISTS rooms (name TEXT PRIMARY KEY, capacity INTEGER DEFAULT 0, type TEXT DEFAULT 'Classroom');
-CREATE TABLE IF NOT EXISTS classes (id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT NOT NULL, slot TEXT NOT NULL, course TEXT NOT NULL, teacher TEXT NOT NULL, room TEXT NOT NULL, group_id TEXT NOT NULL, source TEXT DEFAULT 'manual', is_locked INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS classes (id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT NOT NULL, slot TEXT NOT NULL, course TEXT NOT NULL, teacher TEXT NOT NULL, room TEXT NOT NULL, group_id TEXT NOT NULL, source TEXT DEFAULT 'manual', is_locked INTEGER DEFAULT 0, allocation_status TEXT DEFAULT 'assigned', rejection_reason TEXT DEFAULT '');
 CREATE TABLE IF NOT EXISTS absences (id INTEGER PRIMARY KEY AUTOINCREMENT, teacher TEXT NOT NULL, date TEXT, status TEXT DEFAULT 'absent', reason TEXT DEFAULT '');
 CREATE TABLE IF NOT EXISTS calendar_events (id INTEGER PRIMARY KEY AUTOINCREMENT, event_date TEXT, event TEXT, event_type TEXT, scheduling_rule TEXT);
 CREATE TABLE IF NOT EXISTS optimization_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, operation TEXT, status TEXT, summary TEXT);
+CREATE TABLE IF NOT EXISTS allocation_rejections (id INTEGER PRIMARY KEY AUTOINCREMENT, class_id INTEGER NOT NULL, teacher TEXT NOT NULL, reason TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP, UNIQUE(class_id));
 """
 
 
@@ -37,6 +38,12 @@ def connect():
 def init_db():
     with connect() as conn:
         conn.executescript(SCHEMA)
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(classes)")}
+        if "allocation_status" not in columns:
+            conn.execute("ALTER TABLE classes ADD COLUMN allocation_status TEXT DEFAULT 'assigned'")
+        if "rejection_reason" not in columns:
+            conn.execute("ALTER TABLE classes ADD COLUMN rejection_reason TEXT DEFAULT ''")
+        conn.commit()
 
 
 def has_core_data():
@@ -104,7 +111,7 @@ def seed_from_data(data, source="demo", replace_classes=True):
 def load_data():
     init_db()
     with connect() as conn:
-        classes = [dict(r) for r in conn.execute("SELECT day,slot,course,teacher,room,group_id AS 'group' FROM classes ORDER BY id")]
+        classes = [dict(r) for r in conn.execute("SELECT id,day,slot,course,teacher,room,group_id AS 'group',source,allocation_status,rejection_reason FROM classes ORDER BY id")]
         teachers = [
             {"name": r["name"], "qualified_courses": [x for x in r["qualified_courses"].split("|") if x], "available_slots": json.loads(r["available_slots"] or "{}")}
             for r in conn.execute("SELECT name,qualified_courses,available_slots FROM teachers ORDER BY name")
@@ -116,13 +123,51 @@ def load_data():
             for r in conn.execute("SELECT event_date,event,event_type,scheduling_rule FROM calendar_events ORDER BY event_date,id")
         ]
         absences = [dict(r) for r in conn.execute("SELECT teacher,date,status,reason FROM absences WHERE status='absent' ORDER BY date,id")]
+        allocation_rejections = [dict(r) for r in conn.execute("SELECT class_id,teacher,reason,created_at FROM allocation_rejections ORDER BY id DESC")]
 
-    data = {"classes": classes, "teachers": teachers, "rooms": rooms, "students": students, "calendar_events": calendar_events, "absences": absences}
+    data = {"classes": classes, "teachers": teachers, "rooms": rooms, "students": students, "calendar_events": calendar_events, "absences": absences, "allocation_rejections": allocation_rejections}
     if calendar_events:
         restricted = any(e.get("type") == "restricted_holiday" and e.get("scheduling_rule") == "blocked" for e in calendar_events)
         data["_calendar_day_penalties"] = calendar_day_penalties(calendar_events, restricted_as_holiday=restricted)
     return data
 
+
+
+def set_teacher_availability(teacher, day, slots, available=True):
+    """Add or remove exact timetable slots from a teacher's availability."""
+    init_db()
+    with connect() as conn:
+        row = conn.execute("SELECT available_slots FROM teachers WHERE name=?", (teacher,)).fetchone()
+        if not row:
+            raise ValueError(f"Teacher not found: {teacher}")
+        availability = json.loads(row["available_slots"] or "{}")
+        current = list(availability.get(day, []))
+        if available:
+            current = list(dict.fromkeys(current + list(slots)))
+        else:
+            blocked = set(slots)
+            current = [slot for slot in current if slot not in blocked]
+        availability[day] = current
+        conn.execute("UPDATE teachers SET available_slots=? WHERE name=?", (json.dumps(availability), teacher))
+        conn.commit()
+
+
+def reject_allocation(class_id, teacher, reason=""):
+    """Mark an automatic allocation as rejected by the assigned teacher."""
+    init_db()
+    with connect() as conn:
+        conn.execute("UPDATE classes SET allocation_status='rejected', rejection_reason=? WHERE id=? AND teacher=?", (reason, class_id, teacher))
+        conn.execute("INSERT INTO allocation_rejections(class_id,teacher,reason) VALUES(?,?,?) ON CONFLICT(class_id) DO UPDATE SET teacher=excluded.teacher, reason=excluded.reason, created_at=CURRENT_TIMESTAMP", (class_id, teacher, reason))
+        conn.commit()
+
+
+def accept_allocation(class_id, teacher):
+    """Restore a previously rejected allocation."""
+    init_db()
+    with connect() as conn:
+        conn.execute("UPDATE classes SET allocation_status='assigned', rejection_reason='' WHERE id=? AND teacher=?", (class_id, teacher))
+        conn.execute("DELETE FROM allocation_rejections WHERE class_id=? AND teacher=?", (class_id, teacher))
+        conn.commit()
 
 def record_absence(teacher, absence_date, reason=""):
     init_db()
