@@ -521,6 +521,10 @@ elif page == "Optimization":
                 st.session_state["robustness"]=rb
             st.session_state["last_result"]=result
             record_run(operation,result.get("status","UNKNOWN"),result.get("summary",""))
+        except Exception as exc:
+            result={"status":"ERROR","summary":f"Optimization failed: {exc}","reasons":["Check the input timetable/resource metadata and try again."]}
+            st.session_state["last_result"]=result
+            record_run(operation,"ERROR",str(exc))
     if "last_result" in st.session_state:
         result=st.session_state["last_result"]
         (st.success if result.get("status") in {"OPTIMAL","FEASIBLE","COMPLETE"} or result.get("changed") else st.warning)(result.get("summary","Operation completed."))
