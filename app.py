@@ -473,6 +473,19 @@ elif page == "Teachers":
     st.markdown('<div class="section-title">Teacher Metadata & Availability</div>',unsafe_allow_html=True)
     rows=[{"Teacher":t["name"],"Qualified courses":", ".join(t.get("qualified_courses",[])),"Available slots":sum(len(v) for v in t.get("available_slots",{}).values())} for t in data["teachers"]]
     st.dataframe(pd.DataFrame(rows),use_container_width=True,hide_index=True)
+
+    st.markdown("### Teacher Absences")
+    if data["absences"]:
+        absence_rows=[{
+            "Teacher": a["teacher"],
+            "Date": a["date"],
+            "Status": a.get("status","absent").title(),
+            "Reason": a.get("reason","") or "—"
+        } for a in data["absences"]]
+        st.dataframe(pd.DataFrame(absence_rows),use_container_width=True,hide_index=True)
+    else:
+        st.info("No teacher absences have been recorded.")
+
     st.markdown("### Record an absence")
     if data["teachers"]:
         teacher=st.selectbox("Teacher",sorted({t["name"] for t in data["teachers"]}))
