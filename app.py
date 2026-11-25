@@ -65,6 +65,8 @@ div[data-baseweb="select"] > div, input { border-radius:8px !important; }
 for state_key in ("timetable_upload_version", "calendar_upload_version"):
     if state_key not in st.session_state:
         st.session_state[state_key] = 0
+if "pending_resource_files" not in st.session_state:
+    st.session_state["pending_resource_files"] = {}
 
 def _read_structured_upload(uploaded_file):
     """Return a dataframe for CSV/XLSX/XLS uploads."""
@@ -319,16 +321,54 @@ elif page == "Dashboard":
 
 elif page == "Time Table":
     st.markdown('<div class="section-title">Timetable & Resource Intake</div>',unsafe_allow_html=True)
-    st.caption("Upload one or more timetable/resource CSV or Excel files. AASE automatically detects timetable, room, teacher availability, absence and academic-calendar files.")
+    st.caption("Add timetable/resource files in one or more batches. Files stay queued until you click Import All Files.")
     uploader_key = f"timetable_upload_{st.session_state['timetable_upload_version']}"
-    files=st.file_uploader("Upload timetable/resource files",type=["pdf","csv","xlsx","xls"],accept_multiple_files=True,key=uploader_key)
+    files=st.file_uploader(
+        "Add timetable/resource files",
+        type=["pdf","csv","xlsx","xls"],
+        accept_multiple_files=True,
+        key=uploader_key
+    )
+
+    # Keep uploaded files in session state so a browser/phone file picker that
+    # only allows one selection at a time can still build a multi-file batch.
+    if files:
+        pending = st.session_state["pending_resource_files"]
+        added = 0
+        for f in files:
+            file_bytes = f.getvalue()
+            fingerprint = f"{getattr(f, 'name', '')}:{len(file_bytes)}"
+            if fingerprint not in pending:
+                pending[fingerprint] = {
+                    "name": getattr(f, "name", "uploaded_file"),
+                    "data": file_bytes,
+                }
+                added += 1
+        if added:
+            st.session_state["pending_resource_files"] = pending
+
+    pending = st.session_state["pending_resource_files"]
+    if pending:
+        st.markdown("### Files queued for import")
+        st.write(f"**{len(pending)} file(s) ready**")
+        for item in pending.values():
+            st.markdown(f"✓ {escape(item['name'])}")
+
     use_ocr=st.checkbox("Enable Tesseract fallback for scanned PDFs",value=True,key="timetable_use_ocr")
-    b1,b2=st.columns([3,1])
+    b1,b2,b3=st.columns([2,1,1])
     with b1:
-        parse_clicked=st.button("Parse & import files",type="primary",disabled=not files)
+        parse_clicked=st.button("Import All Files",type="primary",disabled=not pending)
     with b2:
-        clear_clicked=st.button("Clear uploads",disabled=not files)
+        clear_clicked=st.button("Clear queue",disabled=not pending)
+    with b3:
+        add_more=st.button("Add more files")
+
     if clear_clicked:
+        st.session_state["pending_resource_files"] = {}
+        st.session_state["timetable_upload_version"] += 1
+        st.rerun()
+
+    if add_more:
         st.session_state["timetable_upload_version"] += 1
         st.rerun()
 
@@ -337,12 +377,18 @@ elif page == "Time Table":
         timetable_sources=[]
         successes=[]
         errors=[]
-
-        # Collect all timetable files first so uploading both classroom and
-        # student timetables produces one combined timetable instead of the
-        # second file replacing the first.
         resource_files=[]
-        for f in files:
+
+        # Recreate file-like objects from the queued bytes. This lets us
+        # process files accumulated across multiple upload batches.
+        import io
+        queued_files=[]
+        for item in pending.values():
+            buffered = io.BytesIO(item["data"])
+            buffered.name = item["name"]
+            queued_files.append(buffered)
+
+        for f in queued_files:
             try:
                 suffix = Path(getattr(f, "name", "")).suffix.lower()
                 if suffix == ".pdf":
@@ -353,6 +399,7 @@ elif page == "Time Table":
                     frame = _read_structured_upload(f)
                     kind = _classify_resource_upload(frame, getattr(f, "name", ""))
                     if kind == "timetable":
+                        f.seek(0)
                         rows, source = parse_timetable_file(f,default_group=selected_group,use_ocr=False)
                         timetable_rows.extend(rows)
                         timetable_sources.append(f"{f.name} ({source})")
@@ -388,6 +435,7 @@ elif page == "Time Table":
         if successes:
             st.session_state["last_import_preview"] = timetable_rows
             st.session_state["last_import_summary"] = f"Processed {len(successes)} file(s); data is now available in SQLite."
+            st.session_state["pending_resource_files"] = {}
             st.session_state["timetable_upload_version"] += 1
             st.rerun()
 
