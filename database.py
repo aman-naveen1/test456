@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS classes (id INTEGER PRIMARY KEY AUTOINCREMENT, day TE
 CREATE TABLE IF NOT EXISTS absences (id INTEGER PRIMARY KEY AUTOINCREMENT, teacher TEXT NOT NULL, date TEXT, status TEXT DEFAULT 'absent', reason TEXT DEFAULT '');
 CREATE TABLE IF NOT EXISTS calendar_events (id INTEGER PRIMARY KEY AUTOINCREMENT, event_date TEXT, event TEXT, event_type TEXT, scheduling_rule TEXT);
 CREATE TABLE IF NOT EXISTS optimization_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, operation TEXT, status TEXT, summary TEXT);
-CREATE TABLE IF NOT EXISTS allocation_rejections (id INTEGER PRIMARY KEY AUTOINCREMENT, class_id INTEGER NOT NULL, teacher TEXT NOT NULL, reason TEXT DEFAULT '', created_at TEXT DEFAULT CURRENT_TIMESTAMP, UNIQUE(class_id));
+CREATE TABLE IF NOT EXISTS allocation_rejections (id INTEGER PRIMARY KEY AUTOINCREMENT, class_id INTEGER NOT NULL, teacher TEXT NOT NULL, reason TEXT DEFAULT '', approval_status TEXT DEFAULT 'pending', created_at TEXT DEFAULT CURRENT_TIMESTAMP, UNIQUE(class_id));
 """
 
 
@@ -43,6 +43,9 @@ def init_db():
             conn.execute("ALTER TABLE classes ADD COLUMN allocation_status TEXT DEFAULT 'assigned'")
         if "rejection_reason" not in columns:
             conn.execute("ALTER TABLE classes ADD COLUMN rejection_reason TEXT DEFAULT ''")
+        rejection_columns = {row["name"] for row in conn.execute("PRAGMA table_info(allocation_rejections)")}
+        if "approval_status" not in rejection_columns:
+            conn.execute("ALTER TABLE allocation_rejections ADD COLUMN approval_status TEXT DEFAULT 'pending'")
         conn.commit()
 
 
@@ -123,7 +126,7 @@ def load_data():
             for r in conn.execute("SELECT event_date,event,event_type,scheduling_rule FROM calendar_events ORDER BY event_date,id")
         ]
         absences = [dict(r) for r in conn.execute("SELECT teacher,date,status,reason FROM absences WHERE status='absent' ORDER BY date,id")]
-        allocation_rejections = [dict(r) for r in conn.execute("SELECT class_id,teacher,reason,created_at FROM allocation_rejections ORDER BY id DESC")]
+        allocation_rejections = [dict(r) for r in conn.execute("SELECT class_id,teacher,reason,approval_status,created_at FROM allocation_rejections ORDER BY id DESC")]
 
     data = {"classes": classes, "teachers": teachers, "rooms": rooms, "students": students, "calendar_events": calendar_events, "absences": absences, "allocation_rejections": allocation_rejections}
     if calendar_events:
@@ -158,6 +161,22 @@ def reject_allocation(class_id, teacher, reason=""):
     with connect() as conn:
         conn.execute("UPDATE classes SET allocation_status='rejected', rejection_reason=? WHERE id=? AND teacher=?", (reason, class_id, teacher))
         conn.execute("INSERT INTO allocation_rejections(class_id,teacher,reason) VALUES(?,?,?) ON CONFLICT(class_id) DO UPDATE SET teacher=excluded.teacher, reason=excluded.reason, created_at=CURRENT_TIMESTAMP", (class_id, teacher, reason))
+        conn.commit()
+
+
+def approve_allocation_rejection(class_id):
+    """Approve a teacher rejection; the optimizer will create a replacement record."""
+    init_db()
+    with connect() as conn:
+        conn.execute("UPDATE allocation_rejections SET approval_status='approved' WHERE class_id=?", (class_id,))
+        conn.commit()
+
+
+def mark_reallocation_complete(class_id, new_class_id):
+    init_db()
+    with connect() as conn:
+        conn.execute("UPDATE allocation_rejections SET approval_status='reallocated', reason=reason || ? WHERE class_id=?",
+                     (f" | Replacement class ID: {new_class_id}", class_id))
         conn.commit()
 
 
