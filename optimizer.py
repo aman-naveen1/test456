@@ -214,3 +214,82 @@ def optimize_timetable(data, student_id=None, absent_teacher=None, absent_day=No
     result["summary"] = "CP-SAT repair found a globally consistent timetable around the teacher disruption."
     result.setdefault("reasons", []).append(f"{absent_teacher} was unavailable only on {absent_day} at {', '.join(selected_slots)} during this repair.")
     return result
+
+
+def reassign_rejected_class(data, class_id, time_limit=10):
+    """Use CP-SAT to replace one rejected allocation at the same day/slot.
+
+    The rejected class remains as an audit record. A new class record is returned
+    with the same course/group/hour and a different feasible teacher/room.
+    """
+    classes = [dict(x) for x in data.get("classes", [])]
+    target = next((c for c in classes if int(c.get("id", -1)) == int(class_id)), None)
+    if not target:
+        return {"status": "NO_MATCH", "summary": "Rejected class was not found."}
+    day, slot = target["day"], target["slot"]
+    teachers = {t["name"]: t for t in data.get("teachers", [])}
+    rooms = {r["name"]: r for r in data.get("rooms", [])}
+    if not teachers or not rooms:
+        return {"status": "INFEASIBLE", "summary": "Teacher and room metadata are required."}
+
+    occupied = [
+        c for c in classes
+        if int(c.get("id", -1)) != int(class_id)
+        and c.get("day") == day and c.get("slot") == slot
+    ]
+    occupied_teachers = {c.get("teacher") for c in occupied}
+    occupied_rooms = {c.get("room") for c in occupied}
+    occupied_groups = {c.get("group") for c in occupied}
+
+    qualified = [
+        name for name, teacher in teachers.items()
+        if name != target["teacher"]
+        and target["course"] in teacher.get("qualified_courses", [])
+        and (not teacher.get("available_slots") or slot in teacher.get("available_slots", {}).get(day, []))
+        and name not in occupied_teachers
+    ]
+    if not qualified:
+        return {"status": "INFEASIBLE", "summary": f"No qualified replacement teacher is available for {target['course']} at {day} {slot}."}
+
+    model = cp_model.CpModel()
+    choices = []
+    student_count = _student_count_for_class(target, data)
+    for teacher_name in qualified:
+        for room_name, room in rooms.items():
+            if room_name in occupied_rooms:
+                continue
+            capacity = room.get("capacity")
+            if student_count and capacity is not None and int(capacity) < student_count:
+                continue
+            v = model.NewBoolVar(f"replacement_{class_id}_{teacher_name}_{room_name}")
+            choices.append((v, teacher_name, room_name))
+    if not choices:
+        return {"status": "INFEASIBLE", "summary": f"No free room is available for {target['course']} at {day} {slot}."}
+
+    model.Add(sum(v for v, _, _ in choices) == 1)
+    # Prefer the least disruptive feasible replacement, but never reuse the rejected teacher.
+    costs = []
+    for v, teacher_name, room_name in choices:
+        costs.append((0 if room_name == target["room"] else 1) * v)
+        costs.append((0 if teacher_name == target["teacher"] else 1) * v)
+    model.Minimize(sum(costs))
+
+    solver = cp_model.CpSolver()
+    solver.parameters.max_time_in_seconds = time_limit
+    solver.parameters.num_search_workers = 8
+    status = solver.Solve(model)
+    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        return {"status": solver.StatusName(status), "summary": "CP-SAT could not find a replacement allocation."}
+
+    _, new_teacher, new_room = next(x for x in choices if solver.Value(x[0]))
+    replacement = dict(target)
+    replacement.pop("id", None)
+    replacement.update(
+        day=day, slot=slot, teacher=new_teacher, room=new_room,
+        source="reallocation", allocation_status="assigned", rejection_reason=""
+    )
+    return {
+        "status": solver.StatusName(status),
+        "summary": f"CP-SAT approved the rejection and found a replacement at {day} {slot}.",
+        "replacement": replacement,
+    }
