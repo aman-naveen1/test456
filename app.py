@@ -181,8 +181,28 @@ def _import_resource_upload(uploaded_file, selected_group):
             courses = [x.strip() for x in str(row.get("qualified_courses", "")).split(";") if x.strip()]
             days = [x.strip() for x in str(row.get("available_days", "")).split(";") if x.strip()]
             hours_text = str(row.get("available_hours", "")).strip()
-            # Normalize availability into actual slot lists for CP-SAT.
-            hours = [s.strip() for s in re.split(r"[;,|]+", hours_text) if s.strip()]
+            # Expand ranges such as 09:00-18:30 into the actual timetable slots.
+            # This keeps the CSV human-friendly while giving CP-SAT exact slot strings.
+            timetable_slots = [
+                "09:00-10:00", "10:00-11:00", "11:15-12:15",
+                "12:15-13:15", "14:00-15:00", "15:00-16:00",
+            ]
+            hours = []
+            for token in [s.strip() for s in re.split(r"[;,|]+", hours_text) if s.strip()]:
+                match = re.fullmatch(r"(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})", token)
+                if not match:
+                    hours.append(token)
+                    continue
+                start_h, start_m, end_h, end_m = map(int, match.groups())
+                start_minutes = start_h * 60 + start_m
+                end_minutes = end_h * 60 + end_m
+                for slot in timetable_slots:
+                    sh, sm, eh, em = map(int, re.findall(r"\d+", slot))
+                    slot_start = sh * 60 + sm
+                    slot_end = eh * 60 + em
+                    if start_minutes <= slot_start and slot_end <= end_minutes:
+                        hours.append(slot)
+            hours = list(dict.fromkeys(hours))
             teachers.append({
                 "name": name,
                 "qualified_courses": courses,
@@ -434,14 +454,19 @@ elif page == "Time Table":
 
         if successes:
             st.session_state["last_import_preview"] = timetable_rows
+            st.session_state["last_import_receipt"] = successes
             st.session_state["last_import_summary"] = f"Processed {len(successes)} file(s); data is now available in SQLite."
             st.session_state["pending_resource_files"] = {}
             st.session_state["timetable_upload_version"] += 1
             st.rerun()
 
-    if st.session_state.get("last_import_preview"):
-        st.success(st.session_state.get("last_import_summary","Files imported successfully."))
-        if st.session_state["last_import_preview"]:
+    if st.session_state.get("last_import_receipt"):
+        st.success(st.session_state.get("last_import_summary", "Files imported successfully."))
+        st.markdown("### Import receipt")
+        for message in st.session_state["last_import_receipt"]:
+            st.markdown(f"✓ {escape(message)}")
+        if st.session_state.get("last_import_preview"):
+            st.markdown("### Timetable preview")
             st.dataframe(pd.DataFrame(st.session_state["last_import_preview"]),use_container_width=True,hide_index=True)
 
 elif page == "Teachers":
