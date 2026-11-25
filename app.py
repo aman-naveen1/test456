@@ -7,7 +7,7 @@ import streamlit as st
 
 from aase import robustness_report, simulate_disruption
 from calendar_parser import parse_academic_calendar
-from database import absence_count, init_db, load_data, recent_runs, record_absence, record_run, save_calendar, seed_from_data, set_teacher_availability, reject_allocation, accept_allocation, approve_allocation_rejection, mark_reallocation_complete
+from database import absence_countount, init_db, load_data, recent_runs, record_absence, record_run, save_calendar, seed_from_data, set_teacher_availability, reject_allocation, accept_allocation, approve_allocation_rejection, mark_reallocation_complete
 from engine import gap_score, load_demo_data, repair_schedule
 from ingestion import parse_timetable_file
 from optimizer import optimize_timetable, optimize_whole_timetable, reassign_rejected_class
