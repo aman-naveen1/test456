@@ -7,10 +7,10 @@ import streamlit as st
 
 from aase import robustness_report, simulate_disruption
 from calendar_parser import parse_academic_calendar
-from database import absence_count, init_db, load_data, recent_runs, record_absence, record_run, save_calendar, seed_from_data, set_teacher_availability, reject_allocation, accept_allocation
+from database import absence_count, init_db, load_data, recent_runs, record_absence, record_run, save_calendar, seed_from_data, set_teacher_availability, reject_allocation, accept_allocation, approve_allocation_rejection, mark_reallocation_complete
 from engine import gap_score, load_demo_data, repair_schedule
 from ingestion import parse_timetable_file
-from optimizer import optimize_timetable, optimize_whole_timetable
+from optimizer import optimize_timetable, optimize_whole_timetable, reassign_rejected_class
 
 st.set_page_config(page_title="AASE | Timetable Management", page_icon="📅", layout="wide", initial_sidebar_state="expanded")
 init_db()
@@ -534,6 +534,54 @@ elif page == "Teachers":
         st.dataframe(pd.DataFrame(absence_rows),use_container_width=True,hide_index=True)
     else:
         st.info("No teacher absences have been recorded.")
+
+    st.markdown("### Automatic Allocation Rejections")
+    pending_rejections = [r for r in data.get("allocation_rejections", []) if r.get("approval_status") == "pending"]
+    if pending_rejections:
+        rejection_rows = []
+        for r in pending_rejections:
+            cls = next((c for c in data["classes"] if c.get("id") == r.get("class_id")), {})
+            rejection_rows.append({
+                "Class ID": r["class_id"],
+                "Teacher": r["teacher"],
+                "Date/Day": f'{cls.get("day","")} {cls.get("slot","")}',
+                "Course": cls.get("course",""),
+                "Room": cls.get("room",""),
+                "Reason": r.get("reason","") or "—",
+                "Status": "Pending admin approval",
+            })
+        st.dataframe(pd.DataFrame(rejection_rows),use_container_width=True,hide_index=True)
+        approve_id = st.selectbox(
+            "Rejection to approve",
+            [r["class_id"] for r in pending_rejections],
+            format_func=lambda cid: next(f'{x["teacher"]} · {next((c["course"] for c in data["classes"] if c.get("id")==cid), "")} · class {cid}' for x in pending_rejections if x["class_id"] == cid),
+            key="approve_rejection_id",
+        )
+        if st.button("Approve rejection & run CP-SAT", type="primary"):
+            try:
+                approve_allocation_rejection(approve_id)
+                fresh_data = load_data()
+                result = reassign_rejected_class(fresh_data, approve_id, time_limit=10)
+                if result.get("status") in {"OPTIMAL", "FEASIBLE"}:
+                    replacement = result["replacement"]
+                    from database import connect
+                    with connect() as conn:
+                        cur = conn.execute(
+                            "INSERT INTO classes(day,slot,course,teacher,room,group_id,source,is_locked,allocation_status,rejection_reason) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                            (replacement["day"], replacement["slot"], replacement["course"], replacement["teacher"], replacement["room"], replacement["group"], "reallocation", 0, "assigned", ""),
+                        )
+                        new_id = cur.lastrowid
+                        conn.commit()
+                    mark_reallocation_complete(approve_id, new_id)
+                    record_run("Approved allocation rejection", result["status"], result["summary"])
+                    st.success(f'Approved. CP-SAT assigned {replacement["teacher"]} to {replacement["course"]} at {replacement["day"]} {replacement["slot"]}. New record ID: {new_id}.')
+                    st.rerun()
+                else:
+                    record_run("Approved allocation rejection", result.get("status","INFEASIBLE"), result.get("summary",""))
+                    st.error(result.get("summary","CP-SAT could not find a replacement."))
+            except Exception as exc:
+                record_run("Approved allocation rejection","ERROR",str(exc))
+                st.error(f"Reallocation failed: {exc}")
 
     st.markdown("### Record an absence")
     if data["teachers"]:
