@@ -235,7 +235,7 @@ with st.sidebar:
     st.markdown('''<div class="brand"><span class="brand-mark">A</span><div><div class="brand-title">AASE</div><div class="brand-subtitle">Scheduling workspace</div></div></div>''', unsafe_allow_html=True)
     role = st.selectbox("View as", ["Student", "Faculty", "Administrator"], key="role_view")
     navigation = {
-        "Student": ["My Timetable", "Calendar"],
+        "Student": ["My Timetable", "Absences", "Academic Calendar"],
         "Faculty": ["My Teaching", "Report absence"],
         "Administrator": ["Dashboard","Time Table","Teachers","Rooms","Academic Calendar","OCR Intake","Disruptions","Optimization","Reports"],
     }
@@ -256,7 +256,8 @@ data = load_data()
 
 page_descriptions = {
     "My Timetable": "Find your classes, rooms and teaching staff at a glance.",
-    "Calendar": "Keep track of holidays and academic events.",
+    "Absences": "View reported teacher absences and dates.",
+    "Academic Calendar": "Keep track of holidays and academic events.",
     "My Teaching": "Review today’s teaching plan and your assigned sessions.",
     "Report absence": "Let scheduling staff know when you cannot teach.",
 }
