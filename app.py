@@ -7,7 +7,7 @@ import streamlit as st
 
 from aase import robustness_report, simulate_disruption
 from calendar_parser import parse_academic_calendar
-from database import absence_count, init_db, load_data, recent_runs, record_absence, record_run, save_calendar, seed_from_data
+from database import absence_count, init_db, load_data, recent_runs, record_absence, record_run, save_calendar, seed_from_data, set_teacher_availability, reject_allocation, accept_allocation
 from engine import gap_score, load_demo_data, repair_schedule
 from ingestion import parse_timetable_file
 from optimizer import optimize_timetable, optimize_whole_timetable
@@ -303,10 +303,58 @@ elif page == "Calendar":
 elif page == "My Teaching":
     teacher_options = sorted({x["teacher"] for x in data["classes"]}) or ["No teachers found"]
     selected_teacher = st.selectbox("Faculty member", teacher_options, key="faculty_member")
+    teacher_record = next((t for t in data["teachers"] if t["name"] == selected_teacher), None)
+    availability = teacher_record.get("available_slots", {}) if teacher_record else {}
+
+    st.markdown("### Mark availability")
+    st.caption("Teachers can mark exact timetable slots as available or unavailable. This updates the scheduling constraints used by AASE.")
+    av1, av2, av3 = st.columns([1, 1, 2])
+    with av1:
+        availability_day = st.selectbox("Day", ["Monday","Tuesday","Wednesday","Thursday","Friday"], key="availability_day")
+    with av2:
+        availability_state = st.selectbox("Status", ["Available", "Unavailable"], key="availability_state")
+    with av3:
+        availability_slots = st.multiselect("Time slots", ["09:00-10:00","10:00-11:00","11:15-12:15","12:15-13:15","14:00-15:00","15:00-16:00"], key="availability_slots")
+    if st.button("Save availability", type="primary", disabled=not availability_slots):
+        set_teacher_availability(selected_teacher, availability_day, availability_slots, available=(availability_state == "Available"))
+        st.success(f"Updated {selected_teacher}'s availability for {availability_day}.")
+        st.rerun()
+
+    current_slots = availability.get(availability_day, [])
+    st.dataframe(pd.DataFrame([{"Day": availability_day, "Available slots": ", ".join(current_slots) or "None"}]), use_container_width=True, hide_index=True)
+
     faculty_classes = [x for x in data["classes"] if x["teacher"] == selected_teacher and x["day"] == today_name]
     st.markdown(f'''<div class="timetable-panel"><div class="timetable-panel-head"><div><h2>Today’s teaching</h2><p>Sessions assigned to {escape(selected_teacher)}.</p></div><div class="schedule-badge">{len(faculty_classes)} session(s)</div></div>''', unsafe_allow_html=True)
     if faculty_classes:
-        st.dataframe(pd.DataFrame(faculty_classes)[["slot", "course", "group", "room"]], use_container_width=True, hide_index=True)
+        faculty_view = []
+        for row in faculty_classes:
+            faculty_view.append({
+                "ID": row["id"],
+                "Slot": row["slot"],
+                "Course": row["course"],
+                "Group": row["group"],
+                "Room": row["room"],
+                "Allocation": row.get("allocation_status", "assigned").title(),
+                "Reject automatic allocation": "Rejected" if row.get("allocation_status") == "rejected" else "Available",
+            })
+        st.dataframe(pd.DataFrame(faculty_view), use_container_width=True, hide_index=True)
+
+        st.markdown("### Automatic allocation controls")
+        rejectable = [x for x in faculty_classes if x.get("allocation_status") != "rejected"]
+        if rejectable:
+            reject_id = st.selectbox("Allocation to reject", [x["id"] for x in rejectable], format_func=lambda cid: next(f"{x['slot']} · {x['course']} · {x['room']}" for x in rejectable if x["id"] == cid), key="reject_allocation_id")
+            rejection_reason = st.text_input("Reason (optional)", placeholder="e.g. unavailable at this time", key="rejection_reason")
+            if st.button("Reject automatic allocation", type="secondary"):
+                reject_allocation(reject_id, selected_teacher, rejection_reason)
+                st.success("Allocation rejected and recorded.")
+                st.rerun()
+        rejected = [x for x in faculty_classes if x.get("allocation_status") == "rejected"]
+        if rejected:
+            restore_id = st.selectbox("Rejected allocation", [x["id"] for x in rejected], format_func=lambda cid: next(f"{x['slot']} · {x['course']} · {x['room']}" for x in rejected if x["id"] == cid), key="restore_allocation_id")
+            if st.button("Accept allocation again"):
+                accept_allocation(restore_id, selected_teacher)
+                st.success("Allocation restored.")
+                st.rerun()
     else:
         st.info(f"No teaching sessions are scheduled for {selected_teacher} today.")
     st.markdown('</div>', unsafe_allow_html=True)
