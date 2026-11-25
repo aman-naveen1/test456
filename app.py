@@ -516,8 +516,11 @@ elif page == "Optimization":
             elif operation=="Heuristic repair":
                 result=repair_schedule(data,absent_day,absent_slots[0] if absent_slots else None,absent_teacher,selected_group)
             else:
-            rb=robustness_report(data,time_limit=5); result={"status":"COMPLETE","summary":f"Tested {rb['checks']} single-resource disruptions.","reasons":[f"Recoverable: {rb['recoverable_checks']}/{rb['checks']} ({rb['robustness_percent']}%)."]}; st.session_state["robustness"]=rb
-        st.session_state["last_result"]=result; record_run(operation,result.get("status","UNKNOWN"),result.get("summary",""))
+                rb=robustness_report(data,time_limit=5)
+                result={"status":"COMPLETE","summary":f"Tested {rb['checks']} single-resource disruptions.","reasons":[f"Recoverable: {rb['recoverable_checks']}/{rb['checks']} ({rb['robustness_percent']}%)."]}
+                st.session_state["robustness"]=rb
+            st.session_state["last_result"]=result
+            record_run(operation,result.get("status","UNKNOWN"),result.get("summary",""))
     if "last_result" in st.session_state:
         result=st.session_state["last_result"]
         (st.success if result.get("status") in {"OPTIMAL","FEASIBLE","COMPLETE"} or result.get("changed") else st.warning)(result.get("summary","Operation completed."))
